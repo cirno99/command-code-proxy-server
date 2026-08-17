@@ -83,6 +83,8 @@ func (p *Proxy) BuildRequest(openAIReq api.OpenAIChatRequest) (api.CCRequestBody
 
 	temperature := 0.3
 	maxTokens := 64000
+
+	const maxTokensLimit = 200000
 	if openAIReq.Temperature != nil {
 		temperature = *openAIReq.Temperature
 	}
@@ -91,6 +93,9 @@ func (p *Proxy) BuildRequest(openAIReq api.OpenAIChatRequest) (api.CCRequestBody
 	}
 	if openAIReq.MaxCompletionTokens != nil {
 		maxTokens = *openAIReq.MaxCompletionTokens
+	}
+	if maxTokens > maxTokensLimit {
+		maxTokens = maxTokensLimit
 	}
 
 	tools := ConvertTools(openAIReq.Tools)
@@ -406,6 +411,32 @@ func (p *Proxy) StreamResponse(w http.ResponseWriter, r *http.Request, ccResp *h
 
 		case "finish":
 			reason := normalizeFinishReason(event.FinishReason)
+			// 流式场景下 OpenAI 客户端依赖独立的 usage chunk 统计 token/缓存命中，
+			// 因此将 CommandCode 的 totalUsage 透传为带 usage 字段的最后一个 chunk
+			if event.TotalUsage != nil {
+				inputTokens := event.TotalUsage.InputTokens
+				outputTokens := event.TotalUsage.OutputTokens
+				var details *api.OpenAIUsageDetails
+				if d := event.TotalUsage.InputTokenDetails; d != nil {
+					details = &api.OpenAIUsageDetails{
+						CachedTokens:     d.CacheReadTokens,
+						CacheWriteTokens: d.CacheWriteTokens,
+					}
+				}
+				p.WriteSSE(w, flusher, api.OpenAIChatResponse{
+					ID:      requestID,
+					Object:  "chat.completion.chunk",
+					Created: created,
+					Model:   model,
+					Choices: []api.OpenAIChoice{},
+					Usage: &api.OpenAIUsage{
+						PromptTokens:        inputTokens,
+						CompletionTokens:    outputTokens,
+						TotalTokens:         inputTokens + outputTokens,
+						PromptTokensDetails: details,
+					},
+				})
+			}
 			p.WriteSSE(w, flusher, api.OpenAIChatResponse{
 				ID:      requestID,
 				Object:  "chat.completion.chunk",
@@ -443,7 +474,7 @@ func (p *Proxy) NonStreamResponse(w http.ResponseWriter, ccResp *http.Response, 
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	var content strings.Builder
-	var inputTokens, outputTokens int
+	var inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int
 	var hasToolCalls bool
 	var toolCalls []api.ToolCall
 	toolCallByID := map[string]int{}
@@ -526,6 +557,10 @@ func (p *Proxy) NonStreamResponse(w http.ResponseWriter, ccResp *http.Response, 
 			if event.TotalUsage != nil {
 				inputTokens = event.TotalUsage.InputTokens
 				outputTokens = event.TotalUsage.OutputTokens
+				if d := event.TotalUsage.InputTokenDetails; d != nil {
+					cacheReadTokens = d.CacheReadTokens
+					cacheWriteTokens = d.CacheWriteTokens
+				}
 			}
 		case "error":
 			log.Printf("[ERROR] Stream error: %v", event.Error)
@@ -543,6 +578,18 @@ func (p *Proxy) NonStreamResponse(w http.ResponseWriter, ccResp *http.Response, 
 		finishReason = "tool_calls"
 	}
 
+	usage := &api.OpenAIUsage{
+		PromptTokens:     inputTokens,
+		CompletionTokens: outputTokens,
+		TotalTokens:      inputTokens + outputTokens,
+	}
+	if cacheReadTokens > 0 || cacheWriteTokens > 0 {
+		usage.PromptTokensDetails = &api.OpenAIUsageDetails{
+			CachedTokens:     cacheReadTokens,
+			CacheWriteTokens: cacheWriteTokens,
+		}
+	}
+
 	response := api.OpenAIChatResponse{
 		ID:      requestID,
 		Object:  "chat.completion",
@@ -553,11 +600,7 @@ func (p *Proxy) NonStreamResponse(w http.ResponseWriter, ccResp *http.Response, 
 			Message:      msg,
 			FinishReason: &finishReason,
 		}},
-		Usage: &api.OpenAIUsage{
-			PromptTokens:     inputTokens,
-			CompletionTokens: outputTokens,
-			TotalTokens:      inputTokens + outputTokens,
-		},
+		Usage: usage,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

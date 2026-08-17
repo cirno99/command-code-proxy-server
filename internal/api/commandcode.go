@@ -72,5 +72,11 @@ type CCStreamEvent struct {
 	TotalUsage *struct {
 		InputTokens  int `json:"inputTokens"`
 		OutputTokens int `json:"outputTokens"`
+		// inputTokenDetails 携带缓存命中/写入的 token 明细，用于向客户端透传缓存命中率
+		InputTokenDetails *struct {
+			CacheReadTokens  int `json:"cacheReadTokens"`
+			CacheWriteTokens int `json:"cacheWriteTokens"`
+			NoCacheTokens    int `json:"noCacheTokens"`
+		} `json:"inputTokenDetails"`
 	} `json:"totalUsage"`
 }

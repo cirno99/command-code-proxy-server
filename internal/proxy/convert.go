@@ -295,7 +295,8 @@ func ExtractSystem(msgs []api.OpenAIMessage) (string, []api.OpenAIMessage) {
 	var system strings.Builder
 	var rest []api.OpenAIMessage
 	for _, m := range msgs {
-		if m.Role == "system" {
+		// 处理 system 和 developer 角色的消息
+		if m.Role == "system" || m.Role == "developer" {
 			if system.Len() > 0 {
 				system.WriteString("\n")
 			}

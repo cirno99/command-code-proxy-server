@@ -104,10 +104,17 @@ type OpenAIDeltaFunction struct {
 	Arguments string `json:"arguments,omitempty"`
 }
 
+// OpenAIUsageDetails 携带缓存命中/写入的 token 明细（OpenAI/OpenRouter 兼容字段）
+type OpenAIUsageDetails struct {
+	CachedTokens     int `json:"cached_tokens,omitempty"`
+	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+}
+
 type OpenAIUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens        int                `json:"prompt_tokens"`
+	CompletionTokens    int                `json:"completion_tokens"`
+	TotalTokens         int                `json:"total_tokens"`
+	PromptTokensDetails *OpenAIUsageDetails `json:"prompt_tokens_details,omitempty"`
 }
 
 type OpenAIChatResponse struct {
